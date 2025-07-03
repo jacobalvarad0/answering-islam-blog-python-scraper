@@ -10,7 +10,7 @@ Christ is King! ☦️☦️
 
 ## Requirements
 
-- Python 3.7+
+- [python](https://www.python.org/downloads/)
 - [tqdm](https://pypi.org/project/tqdm/)
 - [requests](https://pypi.org/project/requests/)
 - [markdownify](https://pypi.org/project/markdownify/)
