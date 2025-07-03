@@ -25,6 +25,9 @@ pip install requests markdownify tqdm
 ```
 python download_wp_blog.py
 ```
+## To-do List
+
+- [ ] Fine tune for better formatting in Obsidian
 
 ## Licensing
 
