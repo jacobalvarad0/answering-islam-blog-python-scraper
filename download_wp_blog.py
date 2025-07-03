@@ -14,16 +14,11 @@ POSTS_PER_PAGE = 100
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def clean_title_for_filename(title):
-    # Decode HTML entities
     title = html.unescape(title)
-    # Remove forbidden characters: * " \ / < > : | ?
     forbidden = r'[\*\\"\/<>\:\|\?]'
     title = re.sub(forbidden, '', title)
-    # Remove leading/trailing whitespace and dots
     title = title.strip(' .')
-    # Collapse whitespace
     title = re.sub(r'\s+', ' ', title)
-    # Fallback if title is empty after cleaning
     if not title:
         title = "untitled"
     return title
@@ -53,13 +48,61 @@ def fetch_all_posts():
             break
     return posts
 
-def save_post_as_markdown(post, existing_filenames):
+def remove_author_footnotes(content_md):
+    # Remove inline references like [^1], [^note], etc.
+    content_md = re.sub(r'\[\^([^\]]+)\]', '', content_md)
+    # Remove footnote definitions at the end: [^1]: ... or [^note]: ...
+    content_md = re.sub(r'^\[\^([^\]]+)\]:.*(?:\n(?:[ ]{2,}.*|\t.*))*', '', content_md, flags=re.MULTILINE)
+    return content_md
+
+def build_url_to_filename_map(posts):
+    url_to_filename = {}
+    for post in posts:
+        # Use the canonical URL (strip trailing slash)
+        url = post.get('URL', post.get('URL', '')).rstrip('/')
+        filename = clean_title_for_filename(post['title']) + '.md'
+        url_to_filename[url] = filename
+    return url_to_filename
+
+def replace_links_with_footnotes(content_md):
+    link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+    footnotes = []
+    footnote_map = {}
+
+    def link_replacer(match):
+        text, url = match.group(1), match.group(2)
+        key = (text, url)
+        if key not in footnote_map:
+            footnotes.append((text, url))
+            footnote_number = len(footnotes)
+            footnote_map[key] = footnote_number
+        else:
+            footnote_number = footnote_map[key]
+        return f"{text}[^{footnote_number}]"
+
+    content_with_footnotes = link_pattern.sub(link_replacer, content_md)
+    return content_with_footnotes, footnotes
+
+def format_obsidian_footnotes(footnotes, url_to_filename):
+    if not footnotes:
+        return ""
+    lines = ["\n"]
+    for idx, (text, url) in enumerate(footnotes, 1):
+        url_canon = url.rstrip('/')
+        if url_canon in url_to_filename:
+            # Convert to Obsidian link using the file name (without .md)
+            file_name = url_to_filename[url_canon][:-3]
+            lines.append(f"[^{idx}]: [[{file_name}]]")
+        else:
+            lines.append(f"[^{idx}]: {url}")
+    return "\n".join(lines)
+
+def save_post_as_markdown(post, existing_filenames, url_to_filename):
     title = post['title']
     content_html = post['content']
-    date_full = post['date']  # Example: '2012-07-24T18:05:41+00:00'
+    date_full = post['date']
     filename_title = clean_title_for_filename(title)
     filename = f"{filename_title}.md"
-    # Ensure filename is unique in the folder
     counter = 1
     base_filename = filename_title
     while filename in existing_filenames:
@@ -68,7 +111,11 @@ def save_post_as_markdown(post, existing_filenames):
     existing_filenames.add(filename)
     filepath = os.path.join(OUTPUT_DIR, filename)
     content_md = md(content_html)
-    # YAML front matter: title, date, tags, cssclasses (wide-page)
+    # Remove all author footnotes
+    content_no_footnotes = remove_author_footnotes(content_md)
+    # Replace links with Obsidian-style footnotes
+    content_with_footnotes, footnotes = replace_links_with_footnotes(content_no_footnotes)
+    footnotes_block = format_obsidian_footnotes(footnotes, url_to_filename)
     front_matter = (
         f"---\n"
         f'title: "{title}"\n'
@@ -77,11 +124,14 @@ def save_post_as_markdown(post, existing_filenames):
         f"cssclasses: wide-page\n"
         f"---\n\n"
     )
-    # Add [[Sam Shamoun]] at the end
-    full_content = front_matter + content_md.strip() + "\n\n[[Sam Shamoun]]\n"
+    full_content = (
+        front_matter
+        + content_with_footnotes.strip()
+        + "\n\n[[Sam Shamoun]]\n"
+        + footnotes_block
+    )
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(full_content)
-    # Set file modification and access times to the post's date
     dt = datetime.strptime(date_full, '%Y-%m-%dT%H:%M:%S%z')
     timestamp = dt.timestamp()
     os.utime(filepath, (timestamp, timestamp))
@@ -89,9 +139,10 @@ def save_post_as_markdown(post, existing_filenames):
 def main():
     posts = fetch_all_posts()
     print(f"Found {len(posts)} posts. Downloading and converting to Markdown...")
+    url_to_filename = build_url_to_filename_map(posts)
     existing_filenames = set()
     for post in tqdm(posts):
-        save_post_as_markdown(post, existing_filenames)
+        save_post_as_markdown(post, existing_filenames, url_to_filename)
     print(f"All posts saved to '{OUTPUT_DIR}'.")
 
 if __name__ == "__main__":
